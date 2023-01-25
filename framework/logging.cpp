@@ -38,6 +38,10 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#define FORMAT_SKIP_MESSAGE(s1, s2)  \
+        s1 += s2.substr(0, 3);  \
+        s1 += s2.substr(4, s2.size())
+
 #ifdef __unix__
 #  include <sys/utsname.h>
 #endif
@@ -192,7 +196,7 @@ public:
         prepare_line_prefix();
     }
 
-    void print(int tc);
+    void print(int tc, ChildExitStatus status);
 
 private:
     std::string timestamp_prefix;
@@ -434,10 +438,53 @@ static uint8_t status_level(char letter)
         return LOG_LEVEL_VERBOSE(2);    /* info only with -vv */
     case 'd':
         return LOG_LEVEL_VERBOSE(3);    /* debug only with -vvv or the log file */
+    case 'S':
+        return LOG_LEVEL_QUIET;
     }
 
     log_warning("got improper status log message '%c'", letter);
     return 2;
+}
+
+static char skip_category_to_char(SkipCategory category){
+
+    switch (category) {
+    case SkipCategory::RESOURCE_UNAVAILABLE:
+        return 65;
+    case SkipCategory::CPU_NOT_SUPPORTED:
+        return 66;
+    case SkipCategory::DEVICE_NOT_FOUND:
+        return 67;
+    case SkipCategory::DEVICE_NOT_CONFIGURED:
+        return 68;
+    case SkipCategory::OTHERS:
+        return 69;
+    case SkipCategory::RUNTIME_SKIP:
+        return 70;
+    }
+
+    log_warning("No category present, please select one from the predefined ones");
+    return 255;
+}
+
+static const char *char_to_skip_category(char val){
+
+    switch (val) {
+    case 65:
+        return "RESOURCE_UNAVAILABLE";
+    case 66:
+        return "CPU_NOT_SUPPORTED";
+    case 67:
+        return "DEVICE_NOT_FOUND";
+    case 68:
+        return "DEVICE_NOT_CONFIGURED";
+    case 69:
+        return "OTHERS";
+    case 70:
+        return "RUNTIME_SKIP";
+    }
+
+    return "NO CATEGORY PRESENT";
 }
 
 static std::vector<ThreadLog> &all_thread_logs() noexcept
@@ -1196,7 +1243,7 @@ FILE *logging_stream_open(int thread_num, int level)
 static inline void assert_log_message(const char *fmt)
 {
     assert(fmt);
-    assert(fmt[0] == 'd' || fmt[0] == 'I' || fmt[0] == 'W' || fmt[0] == 'E');
+    assert(fmt[0] == 'd' || fmt[0] == 'I' || fmt[0] == 'W' || fmt[0] == 'E' || fmt[0] == 'S');
     assert(fmt[1] == '>');
     assert(fmt[2] == ' ');
     (void)fmt;  // for release builds
@@ -1219,6 +1266,28 @@ void log_platform_message(const char *fmt, ...)
     // Insert prefix and log to main thread
     msg.insert(3, "Platform issue: ");
     log_message_preformatted(-1, msg);
+}
+
+#undef log_message_skip
+void log_message_skip(int thread_num, SkipCategory category, const char *fmt, ...){
+
+    if (current_output_format() == SandstoneApplication::OutputFormat::no_output)
+        return;
+
+    assert_log_message(fmt);
+    if (!SandstoneConfig::Debug && *fmt == 'd')
+        return;         /* no Debug in non-debug build */
+    va_list va;
+    va_start(va, fmt);
+    std::string msg = create_filtered_message_string(fmt, va);
+    va_end(va);
+
+    std::string tmp_s;
+    char ch=skip_category_to_char(category);
+    tmp_s += SANDSTONE_LOG_SKIP;
+    tmp_s.push_back(ch);
+    tmp_s += msg.substr(3, msg.size());
+    log_message_preformatted(thread_num, tmp_s);
 }
 
 #undef log_message
@@ -1706,11 +1775,29 @@ void KeyValuePairLogger::prepare_line_prefix()
     timestamp_prefix += test->id;
 }
 
-void KeyValuePairLogger::print(int tc)
+void KeyValuePairLogger::print(int tc, ChildExitStatus status)
 {
+    std::string skip_message = "skip";
+    std::string skip_message_from_main_thread;
+    get_skip_message(-1, skip_message_from_main_thread);
+
     logging_printf(LOG_LEVEL_QUIET, "%s_result = %s\n", test->id,
-                   state == TestSkipped ? "skip" :
+                   state == TestSkipped ? skip_message.c_str() :
                    state == TestFailed ? "fail" : "pass");
+    
+    if(status.result == TestPassed && state == TestSkipped){ // if test passed in init and skipped on all threads in run
+        logging_printf(LOG_LEVEL_QUIET, "%s_skip_category = %s\n", test->id, "RUNTIME_SKIP");
+        logging_printf(LOG_LEVEL_QUIET, "%s_skip_reason = %s\n", test->id, "Skipped in Run. Check individual thread messages");
+    }
+    else{
+        if(skip_message_from_main_thread.size() > 0){
+            logging_printf(LOG_LEVEL_QUIET, "%s_skip_category = %s\n", test->id, char_to_skip_category(skip_message_from_main_thread[0]));
+            logging_printf(LOG_LEVEL_QUIET, "%s_skip_reason = %s\n", test->id, skip_message_from_main_thread.substr(1, skip_message_from_main_thread.size()).c_str());
+        }else{
+            logging_printf(LOG_LEVEL_QUIET, "%s_skip_category = %s\n", test->id, "none");
+            logging_printf(LOG_LEVEL_QUIET, "%s_skip_reason = %s\n", test->id, "none");
+        }
+    }
     logging_printf(LOG_LEVEL_VERBOSE(1), "%s_seq = %d\n", test->id, tc);
     logging_printf(LOG_LEVEL_VERBOSE(1), "%s_quality = %s\n", test->id, quality_string(test));
     logging_printf(LOG_LEVEL_VERBOSE(1), "%s_description = %s\n", test->id, test->description);
@@ -1802,6 +1889,8 @@ void TapFormatLogger::print(int tc, ChildExitStatus status)
     // build the ok / not ok line
     const char *qual = quality_string(test);
     const char *extra = nullptr;
+    std::string skip_message_from_main_thread;
+    get_skip_message(-1, skip_message_from_main_thread);
     switch (status.result) {
     case TestSkipped:
     case TestPassed:
@@ -1846,6 +1935,13 @@ void TapFormatLogger::print(int tc, ChildExitStatus status)
             tap_line += extra;
         if (status.extra)
             tap_line += format_status_code(status);
+        if(status.result == TestPassed && state == TestSkipped){ // if test passed in init and skipped on all threads in run
+            tap_line += "(RUNTIME_SKIP : Skipped in Run. Check individual thread messages )";
+        }
+        else{
+            if((skip_message_from_main_thread.size() != 0))
+                tap_line += " (" + std::string(char_to_skip_category(skip_message_from_main_thread[0])) + " : " + skip_message_from_main_thread.substr(1,skip_message_from_main_thread.size()) + ")";
+        }    
     }
     int loglevel = LOG_LEVEL_VERBOSE(1);
     if (state == TestFailed || (sApp->fatal_skips && state == TestSkipped))
@@ -2205,8 +2301,24 @@ void YamlLogger::print_result_line(ChildExitStatus status)
     case TestPassed:
         // recheck, as status.result does not take failing threads into account
         switch (state) {
-        case TestSkipped:
-            return logging_printf(loglevel, "  result: skip\n");
+        case TestSkipped:{
+            logging_printf(loglevel, "  result: skip\n");
+            if(status.result == TestPassed && state == TestSkipped){ // if test passed in init and skipped on all threads in run
+                logging_printf(loglevel, "  skip-category: %s\n", "RUNTIME_SKIP");
+                return logging_printf(loglevel, "  skip-reason: %s\n", "Skipped in Run. Check individual thread messages");
+            }else{
+                std::string skip_message_from_main_thread;
+                get_skip_message(-1, skip_message_from_main_thread);
+                std::string storage;
+                escape_for_single_line(skip_message_from_main_thread, storage);
+                if(skip_message_from_main_thread.size()>0){
+                    logging_printf(loglevel, "  skip-category: %s\n", char_to_skip_category(skip_message_from_main_thread[0]));
+                    return logging_printf(loglevel, "  skip-reason: %s\n", storage.substr(1, skip_message_from_main_thread.size()).c_str());
+                }
+                logging_printf(loglevel, "  skip-category: %s\n","OTHERS");  
+                return logging_printf(loglevel, "  skip-reason: %s\n","None");
+            }
+        }    
         case TestPassed:
             return logging_printf(loglevel, "  result: pass\n");
         default:
@@ -2382,7 +2494,7 @@ TestResult logging_print_results(ChildExitStatus status, int *tc, const struct t
     switch (current_output_format()) {
     case SandstoneApplication::OutputFormat::key_value: {
         KeyValuePairLogger l(test, status.result);
-        l.print(n);
+        l.print(n, status);
         return l.state;
     }
 
