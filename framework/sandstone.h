@@ -64,6 +64,7 @@ extern "C" {
 #define SANDSTONE_LOG_WARNING   "W> "
 #define SANDSTONE_LOG_INFO      "I> "
 #define SANDSTONE_LOG_DEBUG     "d> "
+#define SANDSTONE_LOG_SKIP      "S> "
 
 /// logs a formatted error message to the logfile.  log_error accepts a constant format string
 /// followed by 0 or more arguments that provide data for the format string.
@@ -83,6 +84,21 @@ extern "C" {
 #else
 #  define log_debug( ...)       (void)0
 #endif
+
+// skip categories
+typedef enum SkipCategory{
+    RESOURCE_UNAVAILABLE=65,
+    CPU_NOT_SUPPORTED=66,
+    DEVICE_NOT_FOUND=67,
+    DEVICE_NOT_CONFIGURED=68,
+    OTHERS=69,
+    RUNTIME_SKIP=70,
+}SkipCategory;
+
+/// logs a skip message to the logfile. log_skip accepts the category to which the skip belongs to
+/// and accepts a constant format string followed by 0 or more arguments that provide data for the 
+/// format string.
+#define log_skip(skip_category,...)           log_message_skip(thread_num, skip_category, SANDSTONE_LOG_SKIP __VA_ARGS__)
 
 /// used to determine whether one or more CPU features are available at runtime.  f is a bitmask
 /// of cpu features as defined in the auto-generated cpu_features.h file.  For example, a test
@@ -473,6 +489,7 @@ extern int test_time_condition(const struct test *test) noexcept;
 /// failures to allocate memory or create a file.
 extern void log_platform_message(const char *msg, ...) ATTRIBUTE_PRINTF(1, 2);
 extern void log_message(int thread_num, const char *msg, ...) ATTRIBUTE_PRINTF(2, 3);
+extern void log_message_skip(int thread_num, SkipCategory c,const char *msg, ...) ATTRIBUTE_PRINTF(3, 4);
 /// logs binary data to the logs.  The data is specified in the data
 /// parameter and the size of the data in bytes in the size parameter.
 /// The message parameter provides a description of the data which
