@@ -65,6 +65,7 @@ extern "C" {
 #define LOG_LEVEL_ERROR         -1
 #define LOG_LEVEL_QUIET         0
 #define LOG_LEVEL_VERBOSE(n)    (n)
+#define SKIP_CATEGORY(n)        (n)   
 
 extern char *program_invocation_name;       // also in glibc's <errno.h>
 
