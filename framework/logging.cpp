@@ -231,19 +231,19 @@ static const char *strnchr(const char *buffer, char c, size_t len)
 static uint8_t message_code(enum LogTypes logType, int level)
 {
     assert((int)logType < 3);
-    unsigned code = ((unsigned)logType + 1) << 6;
-    code |= (level & 0x3f);
+    unsigned code = ((unsigned)logType + 1) << 4;
+    code |= (level & 0xf);
     return (uint8_t)code;
 }
 
 static enum LogTypes log_type_from_code(uint8_t code)
 {
-    return (enum LogTypes)((code >> 6) - 1);
+    return (enum LogTypes)((code >> 4) - 1);
 }
 
 static int level_from_code(uint8_t code)
 {
-    return code & 0x3f;
+    return code & 0xf;
 }
 
 static auto thread_core_spacing()
@@ -1545,14 +1545,13 @@ static void print_content_single_line(int fd, std::string_view before,
     writeln(fd, before, escape_for_single_line(message, escaped), after);
 }
 
-static void format_and_print_message(int fd, int message_level, std::string_view message, std::string_view log_type)
+static void format_and_print_message(int fd, int message_level, std::string_view message)
 {
     const char *levels[] = { "error", "warning", "info", "debug" }; //levels for yaml
 
-    const char *newline = strnchr(&message[0], '\n', message.size());
-    if (newline) {
+    if (message.find('\n') != std::string_view::npos) {
         /* multi line */
-        if (log_type == "yaml") {
+        if (current_output_format() == SandstoneApplication::OutputFormat::yaml) {
             if (message_level > int(std::size(levels)))
                 message_level = std::size(levels) - 1;
 
@@ -1568,7 +1567,7 @@ static void format_and_print_message(int fd, int message_level, std::string_view
         }
     } else {
         /* single line */
-        if (log_type == "yaml") {
+        if (current_output_format() == SandstoneApplication::OutputFormat::yaml) {
             iovec vec[] = { IoVec(indent_spaces()), IoVec("    - { level: "), IoVec(levels[message_level]) };
             IGNORE_RETVAL(writev(fd, vec, std::size(vec)));
             print_content_single_line(fd, ", text: '", message, "' }");
@@ -1599,7 +1598,7 @@ static int print_one_thread_messages(int fd, struct per_thread_data *data, struc
         std::string_view message(ptr, delim - ptr);
         switch (log_type_from_code(code)) {
         case UserMessages:
-            format_and_print_message(fd, -1, message, "not yaml");
+            format_and_print_message(fd, -1, message);
             break;
 
         case Preformatted:
@@ -2170,7 +2169,7 @@ inline int YamlLogger::print_one_thread_messages(int fd, mmap_region r, int leve
 
         switch (log_type_from_code(code)) {
         case UserMessages:
-            format_and_print_message(fd, message_level, message, "yaml");
+            format_and_print_message(fd, message_level, message);
             break;
 
         case Preformatted:
