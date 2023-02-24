@@ -38,10 +38,6 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#define FORMAT_SKIP_MESSAGE(s1, s2)  \
-        s1 += s2.substr(0, 3);  \
-        s1 += s2.substr(4, s2.size())
-
 #ifdef __unix__
 #  include <sys/utsname.h>
 #endif
@@ -446,42 +442,23 @@ static uint8_t status_level(char letter)
     return 2;
 }
 
-static char skip_category_to_char(SkipCategory category){
-
-    switch (category) {
-    case SkipCategory::RESOURCE_UNAVAILABLE:
-        return 65;
-    case SkipCategory::CPU_NOT_SUPPORTED:
-        return 66;
-    case SkipCategory::DEVICE_NOT_FOUND:
-        return 67;
-    case SkipCategory::DEVICE_NOT_CONFIGURED:
-        return 68;
-    case SkipCategory::OTHERS:
-        return 69;
-    case SkipCategory::RUNTIME_SKIP:
-        return 70;
-    }
-
-    log_warning("No category present, please select one from the predefined ones");
-    return 255;
-}
-
-static const char *char_to_skip_category(char val){
-
+static const char *char_to_skip_category(int val)
+{
     switch (val) {
-    case 65:
+    case SKIP_CATEGORY(1):
         return "RESOURCE_UNAVAILABLE";
-    case 66:
+    case SKIP_CATEGORY(2):
         return "CPU_NOT_SUPPORTED";
-    case 67:
+    case SKIP_CATEGORY(3):
         return "DEVICE_NOT_FOUND";
-    case 68:
+    case SKIP_CATEGORY(4):
         return "DEVICE_NOT_CONFIGURED";
-    case 69:
-        return "OTHERS";
-    case 70:
+    case SKIP_CATEGORY(5):
+        return "UNKNOWN";
+    case SKIP_CATEGORY(6):
         return "RUNTIME_SKIP";
+    case SKIP_CATEGORY(7):
+        return "SELFTEST_SKIP";
     }
 
     return "NO CATEGORY PRESENT";
@@ -1269,23 +1246,20 @@ void log_platform_message(const char *fmt, ...)
 }
 
 #undef log_message_skip
-void log_message_skip(int thread_num, SkipCategory category, const char *fmt, ...){
-
+void log_message_skip(int thread_num, SkipCategory category, const char *fmt, ...)
+{
     if (current_output_format() == SandstoneApplication::OutputFormat::no_output)
         return;
 
     assert_log_message(fmt);
-    if (!SandstoneConfig::Debug && *fmt == 'd')
-        return;         /* no Debug in non-debug build */
     va_list va;
     va_start(va, fmt);
     std::string msg = create_filtered_message_string(fmt, va);
     va_end(va);
 
     std::string tmp_s;
-    char ch=skip_category_to_char(category);
     tmp_s += SANDSTONE_LOG_SKIP;
-    tmp_s.push_back(ch);
+    tmp_s.push_back(category);
     tmp_s += msg.substr(3, msg.size());
     log_message_preformatted(thread_num, tmp_s);
 }
@@ -1614,38 +1588,79 @@ static void print_content_single_line(int fd, std::string_view before,
     writeln(fd, before, escape_for_single_line(message, escaped), after);
 }
 
-static void format_and_print_message(int fd, int message_level, std::string_view message)
+static void format_and_print_message(int fd, int message_level, std::string_view message, bool from_thread_message)
 {
-    const char *levels[] = { "error", "warning", "info", "debug" }; //levels for yaml
+    const char *levels[] = { "error", "warning", "info", "debug", "skip" }; //levels for yaml
 
     if (message.find('\n') != std::string_view::npos) {
         /* multi line */
         if (current_output_format() == SandstoneApplication::OutputFormat::yaml) {
-            if (message_level > int(std::size(levels)))
-                message_level = std::size(levels) - 1;
+            if (from_thread_message) {
+                 if (message_level > int(std::size(levels)))
+                    message_level = std::size(levels) - 1;
 
-            // trim a trailing newline, if any (just one)
-            if (message[message.size() - 1] == '\n')
-                message.remove_suffix(1);
-            writeln(fd, indent_spaces(), "    - level: ", levels[message_level]);
-            writeln(fd, indent_spaces(), "      text: |1");
-            print_content_indented(fd, "       ", message);
+                // trim a trailing newline, if any (just one)
+                if (message[message.size() - 1] == '\n')
+                    message.remove_suffix(1);
+
+                writeln(fd, indent_spaces(), "    - level: ", levels[message_level]);
+                writeln(fd, indent_spaces(), "      text: |1");
+                print_content_indented(fd, "       ", message);
+            } else {
+                writeln(fd, indent_spaces(), "  skip_reason: |1");
+                print_content_indented(fd, "   ", message);
+            }   
         } else {
-            writeln(fd, "  - |");
+            if (from_thread_message)
+                writeln(fd, "  - |");
+            else
+                writeln(fd, indent_spaces(), "\n  - |");
             print_content_indented(fd, "    ", message);
         }
     } else {
         /* single line */
         if (current_output_format() == SandstoneApplication::OutputFormat::yaml) {
-            iovec vec[] = { IoVec(indent_spaces()), IoVec("    - { level: "), IoVec(levels[message_level]) };
-            IGNORE_RETVAL(writev(fd, vec, std::size(vec)));
-            print_content_single_line(fd, ", text: '", message, "' }");
+            if (from_thread_message) {
+                iovec vec[] = { IoVec(indent_spaces()), IoVec("    - { level: "), IoVec(levels[message_level]) };
+                IGNORE_RETVAL(writev(fd, vec, std::size(vec)));
+                print_content_single_line(fd, ", text: '", message, "' }");
+            } else {
+                print_content_single_line(fd, "  skip-reason: '", message, "'");
+            }
         } else {
-            char c = '\'';
-            print_content_single_line(fd, "   - '", message, std::string_view(&c, 1));
+            if (from_thread_message) {
+                char c = '\'';
+                print_content_single_line(fd, "   - '", message, std::string_view(&c, 1));
+            } else {
+                print_content_single_line(fd, "'", message, "'");
+            }
         }
     }
+}
 
+static std::string_view get_skip_message(int thread_num, std::string &skip_message)
+{
+    auto log = log_for_thread(thread_num);
+    struct mmap_region r = mmap_file(log.log_fd);
+    auto ptr = static_cast<const char *>(r.base);
+    const char *end = ptr + r.size;
+    const char *delim;
+
+    for ( ; ptr < end && (delim = strnchr(ptr, '\0', end - ptr)) != NULL; ptr = delim + 1) {
+        ptr++;
+        if (*ptr == 'S') {
+            skip_message.assign(ptr, delim);
+            break;
+        }
+    }
+    munmap_file(r);
+    return skip_message;
+}
+
+static inline void format_skip_message(std::string &skip_message, std::string_view message)
+{
+    skip_message += message.substr(0, 3);
+    skip_message += message.substr(4, message.size());
 }
 
 /// Returns the lowest priority found
@@ -1667,7 +1682,13 @@ static int print_one_thread_messages(int fd, struct per_thread_data *data, struc
         std::string_view message(ptr, delim - ptr);
         switch (log_type_from_code(code)) {
         case UserMessages:
-            format_and_print_message(fd, -1, message);
+            if (message[0] == 'S') {
+                std::string skip_message;
+                format_skip_message(skip_message, message);
+                std::string_view skip_message_view(&skip_message[0], skip_message.size());
+                format_and_print_message(fd, -1, skip_message_view, true);
+            } else
+                format_and_print_message(fd, -1, message, true);
             break;
 
         case Preformatted:
@@ -1777,27 +1798,29 @@ void KeyValuePairLogger::prepare_line_prefix()
 
 void KeyValuePairLogger::print(int tc, ChildExitStatus status)
 {
-    std::string skip_message = "skip";
-    std::string skip_message_from_main_thread;
-    get_skip_message(-1, skip_message_from_main_thread);
-
     logging_printf(LOG_LEVEL_QUIET, "%s_result = %s\n", test->id,
-                   state == TestSkipped ? skip_message.c_str() :
+                   state == TestSkipped ? "skip" :
                    state == TestFailed ? "fail" : "pass");
     
-    if(status.result == TestPassed && state == TestSkipped){ // if test passed in init and skipped on all threads in run
+    if (status.result == TestPassed && state == TestSkipped) { // if test passed in init and skipped on all threads in run
         logging_printf(LOG_LEVEL_QUIET, "%s_skip_category = %s\n", test->id, "RUNTIME_SKIP");
-        logging_printf(LOG_LEVEL_QUIET, "%s_skip_reason = %s\n", test->id, "Skipped in Run. Check individual thread messages");
-    }
-    else{
-        if(skip_message_from_main_thread.size() > 0){
-            logging_printf(LOG_LEVEL_QUIET, "%s_skip_category = %s\n", test->id, char_to_skip_category(skip_message_from_main_thread[0]));
-            logging_printf(LOG_LEVEL_QUIET, "%s_skip_reason = %s\n", test->id, skip_message_from_main_thread.substr(1, skip_message_from_main_thread.size()).c_str());
-        }else{
-            logging_printf(LOG_LEVEL_QUIET, "%s_skip_category = %s\n", test->id, "none");
-            logging_printf(LOG_LEVEL_QUIET, "%s_skip_reason = %s\n", test->id, "none");
+        logging_printf(LOG_LEVEL_QUIET, "%s_skip_reason = %s\n", test->id, "All CPUs skipped while executing 'test_run()' function, check log for details");
+    } else if (status.result == TestSkipped) {  //if skipped in init
+        std::string init_skip_message;
+        get_skip_message(-1, init_skip_message);
+        if (init_skip_message.size() > 0) {
+            logging_printf(LOG_LEVEL_QUIET, "%s_skip_category = %s\n", test->id, char_to_skip_category(init_skip_message[3]));
+            logging_printf(LOG_LEVEL_QUIET, "%s_skip_reason = ", test->id);
+            std::string_view message(&init_skip_message[4], init_skip_message.size()-4);
+            format_and_print_message(real_stdout_fd, -1, message, false);
+            if (file_log_fd != real_stdout_fd)
+                format_and_print_message(file_log_fd, -1, message, false);
+        } else {
+            logging_printf(LOG_LEVEL_QUIET, "%s_skip_category = %s\n", test->id, "UNKNOWN");
+            logging_printf(LOG_LEVEL_QUIET, "%s_skip_reason = %s\n", test->id, "unknown");
         }
     }
+
     logging_printf(LOG_LEVEL_VERBOSE(1), "%s_seq = %d\n", test->id, tc);
     logging_printf(LOG_LEVEL_VERBOSE(1), "%s_quality = %s\n", test->id, quality_string(test));
     logging_printf(LOG_LEVEL_VERBOSE(1), "%s_description = %s\n", test->id, test->description);
@@ -1889,8 +1912,6 @@ void TapFormatLogger::print(int tc, ChildExitStatus status)
     // build the ok / not ok line
     const char *qual = quality_string(test);
     const char *extra = nullptr;
-    std::string skip_message_from_main_thread;
-    get_skip_message(-1, skip_message_from_main_thread);
     switch (status.result) {
     case TestSkipped:
     case TestPassed:
@@ -1935,13 +1956,14 @@ void TapFormatLogger::print(int tc, ChildExitStatus status)
             tap_line += extra;
         if (status.extra)
             tap_line += format_status_code(status);
-        if(status.result == TestPassed && state == TestSkipped){ // if test passed in init and skipped on all threads in run
-            tap_line += "(RUNTIME_SKIP : Skipped in Run. Check individual thread messages )";
-        }
-        else{
-            if((skip_message_from_main_thread.size() != 0))
-                tap_line += " (" + std::string(char_to_skip_category(skip_message_from_main_thread[0])) + " : " + skip_message_from_main_thread.substr(1,skip_message_from_main_thread.size()) + ")";
-        }    
+        if (status.result == TestPassed && state == TestSkipped) { // if test passed in init and skipped on all threads in run
+            tap_line += "(RUNTIME_SKIP : All CPUs skipped while executing 'test_run()' function, check log for details)";
+        } else if (status.result == TestSkipped) {  //if skipped in init
+            std::string init_skip_message;
+            get_skip_message(-1, init_skip_message);
+            if (init_skip_message.size() != 0)
+                tap_line += " (" + std::string(char_to_skip_category(init_skip_message[3])) + " : " + init_skip_message.substr(4,init_skip_message.size()) + ")";
+        }       
     }
     int loglevel = LOG_LEVEL_VERBOSE(1);
     if (state == TestFailed || (sApp->fatal_skips && state == TestSkipped))
@@ -2265,7 +2287,14 @@ inline int YamlLogger::print_one_thread_messages(int fd, mmap_region r, int leve
 
         switch (log_type_from_code(code)) {
         case UserMessages:
-            format_and_print_message(fd, message_level, message);
+            if (message[0] == 'S') {
+                std::string skip_message;
+                format_skip_message(skip_message, message);
+                std::string_view skip_message_view(&skip_message[0], skip_message.size());
+                format_and_print_message(fd, 4, skip_message_view, true);
+            }
+            else
+                format_and_print_message(fd, message_level, message, true);
             break;
 
         case Preformatted:
@@ -2301,24 +2330,27 @@ void YamlLogger::print_result_line(ChildExitStatus status)
     case TestPassed:
         // recheck, as status.result does not take failing threads into account
         switch (state) {
-        case TestSkipped:{
+        case TestSkipped: {
             logging_printf(loglevel, "  result: skip\n");
-            if(status.result == TestPassed && state == TestSkipped){ // if test passed in init and skipped on all threads in run
+            if (status.result == TestPassed && state == TestSkipped) { // if test passed in init and skipped on all threads in run
                 logging_printf(loglevel, "  skip-category: %s\n", "RUNTIME_SKIP");
-                return logging_printf(loglevel, "  skip-reason: %s\n", "Skipped in Run. Check individual thread messages");
-            }else{
-                std::string skip_message_from_main_thread;
-                get_skip_message(-1, skip_message_from_main_thread);
-                std::string storage;
-                escape_for_single_line(skip_message_from_main_thread, storage);
-                if(skip_message_from_main_thread.size()>0){
-                    logging_printf(loglevel, "  skip-category: %s\n", char_to_skip_category(skip_message_from_main_thread[0]));
-                    return logging_printf(loglevel, "  skip-reason: %s\n", storage.substr(1, skip_message_from_main_thread.size()).c_str());
+                return logging_printf(loglevel, "  skip-reason: %s\n", "All CPUs skipped while executing 'test_run()' function, check log for details");
+            } else if (status.result == TestSkipped) {  //if skipped in init
+                std::string init_skip_message;
+                get_skip_message(-1, init_skip_message);
+                if (init_skip_message.size() > 0) {
+                    logging_printf(loglevel, "  skip-category: %s\n", char_to_skip_category(init_skip_message[3]));
+                    std::string_view message(&init_skip_message[4], init_skip_message.size()-4);
+                    format_and_print_message(real_stdout_fd, -1, message, false);
+                    if (file_log_fd != real_stdout_fd)
+                        format_and_print_message(file_log_fd, -1, message, false);
+                } else {
+                    logging_printf(loglevel, "  skip-category: %s\n", "UNKNOWN");  
+                    return logging_printf(loglevel, "  skip-reason: %s\n", "unknown");
                 }
-                logging_printf(loglevel, "  skip-category: %s\n","OTHERS");  
-                return logging_printf(loglevel, "  skip-reason: %s\n","None");
             }
-        }    
+            return;
+        }
         case TestPassed:
             return logging_printf(loglevel, "  result: pass\n");
         default:
