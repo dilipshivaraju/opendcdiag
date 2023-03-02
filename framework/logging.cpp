@@ -150,7 +150,7 @@ private:
     const char *stdout_terminator = nullptr;
 
     void maybe_print_yaml_marker(int fd);
-    void print_thread_messages();
+    void print_thread_messages(ChildExitStatus status);
     void print_thread_header(int fd, int cpu, int verbosity);
     void print_child_stderr();
     static std::string format_status_code(ChildExitStatus status);
@@ -177,7 +177,7 @@ private:
     void maybe_print_messages_header(int fd);
     void print_thread_header(int fd, int cpu, int verbosity);
     static int print_test_knobs(int fd, mmap_region r);
-    static int print_one_thread_messages(int fd, mmap_region r, int level);
+    static int print_one_thread_messages(int fd, mmap_region r, int level, ChildExitStatus status);
     void print_result_line(ChildExitStatus status);
 
     enum TestHeaderTime { AtStart, OnFirstFail };
@@ -200,7 +200,7 @@ private:
 
     void prepare_line_prefix();
     void print_thread_header(int fd, int cpu, const char *prefix);
-    void print_thread_messages();
+    void print_thread_messages(ChildExitStatus status);
     void print_child_stderr();
 };
 
@@ -1616,7 +1616,7 @@ static void format_and_print_message(int fd, int message_level, std::string_view
                 writeln(fd, indent_spaces(), "      text: |1");
                 print_content_indented(fd, "       ", message);
             } else {
-                writeln(fd, indent_spaces(), "  skip_reason: |1");
+                writeln(fd, indent_spaces(), "  skip-reason: |1");
                 print_content_indented(fd, "   ", message);
             }   
         } else {
@@ -1634,6 +1634,8 @@ static void format_and_print_message(int fd, int message_level, std::string_view
                 IGNORE_RETVAL(writev(fd, vec, std::size(vec)));
                 print_content_single_line(fd, ", text: '", message, "' }");
             } else {
+                iovec vec[] = { IoVec(indent_spaces()) };
+                IGNORE_RETVAL(writev(fd, vec, std::size(vec)));
                 print_content_single_line(fd, "  skip-reason: '", message, "'");
             }
         } else {
@@ -1674,7 +1676,7 @@ static inline void format_skip_message(std::string &skip_message, std::string_vi
 
 /// Returns the lowest priority found
 /// (this function is shared between the TAP and key-value pair loggers)
-static int print_one_thread_messages(int fd, struct per_thread_data *data, struct mmap_region r, int level)
+static int print_one_thread_messages(int fd, struct per_thread_data *data, struct mmap_region r, int level, ChildExitStatus status)
 {
     int lowest_level = INT_MAX;
     auto ptr = static_cast<const char *>(r.base);
@@ -1699,10 +1701,12 @@ static int print_one_thread_messages(int fd, struct per_thread_data *data, struc
             break;
         
         case SkipMessages: {
-            std::string skip_message;
-            format_skip_message(skip_message, message);
-            std::string_view skip_message_view(&skip_message[0], skip_message.size());
-            format_and_print_message(fd, -1, skip_message_view, true);
+            if (status.result != TestSkipped) { // If test skipped in init, no need to display as it's already displayed in print_result_line
+                std::string skip_message;
+                format_skip_message(skip_message, message);
+                std::string_view skip_message_view(&skip_message[0], skip_message.size());
+                format_and_print_message(fd, -1, skip_message_view, true);
+            }
             break;
         }
 
@@ -1769,7 +1773,7 @@ inline AbstractLogger::AbstractLogger(const struct test *test, TestResult state_
 
     if (state == TestSkipped)
         return;         // no threads were started
-
+        
     for (int i = 0; i < num_cpus(); ++i) {
         struct per_thread_data *data = cpu_data_for_thread(i);
         ThreadState thr_state = data->thread_state.load(std::memory_order_relaxed);
@@ -1828,7 +1832,7 @@ void KeyValuePairLogger::print(int tc, ChildExitStatus status)
                 format_and_print_message(file_log_fd, -1, message, false);
         } else {
             logging_printf(LOG_LEVEL_QUIET, "%s_skip_category = %s\n", test->id, "UNKNOWN");
-            logging_printf(LOG_LEVEL_QUIET, "%s_skip_reason = %s\n", test->id, "unknown");
+            logging_printf(LOG_LEVEL_QUIET, "%s_skip_reason = %s\n", test->id, "Unknown, check main thread message for details");
         }
     }
 
@@ -1850,7 +1854,7 @@ void KeyValuePairLogger::print(int tc, ChildExitStatus status)
     }
 
     logging_flush();
-    print_thread_messages();
+    print_thread_messages(status);
     print_child_stderr();
     logging_flush();
 }
@@ -1886,7 +1890,7 @@ void KeyValuePairLogger::print_thread_header(int fd, int cpu, const char *prefix
     dprintf(fd, "\n%s_messages_thread_%d = \\\n", prefix, cpu);
 }
 
-void KeyValuePairLogger::print_thread_messages()
+void KeyValuePairLogger::print_thread_messages(ChildExitStatus status)
 {
     for (int i = -1; i < num_cpus(); i++) {
         struct per_thread_data *data = cpu_data_for_thread(i);
@@ -1897,11 +1901,11 @@ void KeyValuePairLogger::print_thread_messages()
             continue;           /* nothing to be printed, on any level */
 
         print_thread_header(file_log_fd, i, timestamp_prefix.c_str());
-        int lowest_level = print_one_thread_messages(file_log_fd, data, r, INT_MAX);
+        int lowest_level = print_one_thread_messages(file_log_fd, data, r, INT_MAX, status);
 
         if (lowest_level <= sApp->verbosity && file_log_fd != real_stdout_fd) {
             print_thread_header(real_stdout_fd, i, test->id);
-            print_one_thread_messages(real_stdout_fd, data, r, sApp->verbosity);
+            print_one_thread_messages(real_stdout_fd, data, r, sApp->verbosity, status);
         }
 
         munmap_file(r);
@@ -1974,6 +1978,8 @@ void TapFormatLogger::print(int tc, ChildExitStatus status)
             get_skip_message(-1, init_skip_message);
             if (init_skip_message.size() != 0)
                 tap_line += " (" + std::string(char_to_skip_category(init_skip_message[3])) + " : " + init_skip_message.substr(4,init_skip_message.size()) + ")";
+            else
+                tap_line += "(UNKNOWN: check main thread message for details)";
         }       
     }
     int loglevel = LOG_LEVEL_VERBOSE(1);
@@ -1982,7 +1988,7 @@ void TapFormatLogger::print(int tc, ChildExitStatus status)
     logging_printf(loglevel, "%s\n", tap_line.c_str());
 
     logging_flush();
-    print_thread_messages();
+    print_thread_messages(status);
     if (sApp->verbosity >= 1)
         print_child_stderr();
 
@@ -2151,7 +2157,7 @@ void TapFormatLogger::print_thread_header(int fd, int cpu, int verbosity)
     }
 }
 
-void TapFormatLogger::print_thread_messages()
+void TapFormatLogger::print_thread_messages(ChildExitStatus status)
 {
     for (int i = -1; i < num_cpus(); i++) {
         struct per_thread_data *data = cpu_data_for_thread(i);
@@ -2162,11 +2168,11 @@ void TapFormatLogger::print_thread_messages()
             continue;           /* nothing to be printed, on any level */
 
         print_thread_header(file_log_fd, i, INT_MAX);
-        int lowest_level = print_one_thread_messages(file_log_fd, data, r, INT_MAX);
+        int lowest_level = print_one_thread_messages(file_log_fd, data, r, INT_MAX, status);
 
         if (lowest_level <= sApp->verbosity && file_log_fd != real_stdout_fd) {
             print_thread_header(real_stdout_fd, i, sApp->verbosity);
-            print_one_thread_messages(real_stdout_fd, data, r, sApp->verbosity);
+            print_one_thread_messages(real_stdout_fd, data, r, sApp->verbosity, status);
         }
 
         munmap_file(r);
@@ -2274,7 +2280,7 @@ int YamlLogger::print_test_knobs(int fd, mmap_region r)
     return print_count;
 }
 
-inline int YamlLogger::print_one_thread_messages(int fd, mmap_region r, int level)
+inline int YamlLogger::print_one_thread_messages(int fd, mmap_region r, int level, ChildExitStatus status)
 {
     int lowest_level = INT_MAX;
     auto ptr = static_cast<const char *>(r.base);
@@ -2306,10 +2312,12 @@ inline int YamlLogger::print_one_thread_messages(int fd, mmap_region r, int leve
             break;
         
         case SkipMessages: {
-            std::string skip_message;
-            format_skip_message(skip_message, message);
-            std::string_view skip_message_view(&skip_message[0], skip_message.size());
-            format_and_print_message(fd, 4, skip_message_view, true);
+            if (status.result != TestSkipped) { // If test skipped in init, no need to display as it's already displayed in print_result_line
+                std::string skip_message;
+                format_skip_message(skip_message, message);
+                std::string_view skip_message_view(&skip_message[0], skip_message.size());
+                format_and_print_message(fd, 4, skip_message_view, true);
+            }
             break;
         }
         
@@ -2358,7 +2366,7 @@ void YamlLogger::print_result_line(ChildExitStatus status)
                         format_and_print_message(file_log_fd, -1, message, false);
                 } else {
                     logging_printf(loglevel, "  skip-category: %s\n", "UNKNOWN");  
-                    return logging_printf(loglevel, "  skip-reason: %s\n", "unknown");
+                    return logging_printf(loglevel, "  skip-reason: %s\n", "Unknown, check main thread message for details");
                 }
             }
             return;
@@ -2467,11 +2475,11 @@ void YamlLogger::print(int, ChildExitStatus status)
             continue;           /* nothing to be printed, on any level */
 
         print_thread_header(file_log_fd, i, INT_MAX);
-        int lowest_level = print_one_thread_messages(file_log_fd, r, INT_MAX);
+        int lowest_level = print_one_thread_messages(file_log_fd, r, INT_MAX, status);
 
         if (lowest_level <= sApp->verbosity && file_log_fd != real_stdout_fd) {
             print_thread_header(real_stdout_fd, i, sApp->verbosity);
-            print_one_thread_messages(real_stdout_fd, r, sApp->verbosity);
+            print_one_thread_messages(real_stdout_fd, r, sApp->verbosity, status);
         }
 
         munmap_file(r);
