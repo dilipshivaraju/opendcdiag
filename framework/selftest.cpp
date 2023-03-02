@@ -168,25 +168,25 @@ static int selftest_skip_run(struct test *test, int cpu)
     return EXIT_FAILURE;
 }
 
-static int selftest_log_skip_in_init(struct test *test)
+static int selftest_log_skip_init(struct test *test)
 {
     log_skip(SELFTEST_SKIP, "This is a skip in init");
     return EXIT_SKIP;
 }
 
-static int selftest_log_skip_in_run(struct test *test, int cpu)
+static int selftest_log_skip_run(struct test *test, int cpu)
 {
     log_skip(SELFTEST_SKIP, "Control shouldn't reach here");
-    return EXIT_FAILURE;
+    return EXIT_SUCCESS;
 }
 
-static int selftest_log_skip_in_run_all_threads_run(struct test *test, int cpu)
+static int selftest_log_skip_run_all_threads(struct test *test, int cpu)
 {
-    log_skip(RUNTIME_SKIP, "Skipping on all threads");
+    log_skip(SELFTEST_SKIP, "Skipping on all threads");
     return EXIT_SKIP;
 }
 
-static int selftest_log_skip_in_run_even_threads_run(struct test *test, int cpu)
+static int selftest_log_skip_run_even_threads(struct test *test, int cpu)
 {
     if (cpu % 2 == 0) {
         log_skip(SELFTEST_SKIP, "Skipping on even numbered threads");
@@ -1108,25 +1108,25 @@ FOREACH_DATATYPE(DATACOMPARE_TEST)
     .flags = test_type_kvm,
 },
 {
-    .id = "selftest_log_skip_in_init",
+    .id = "selftest_log_skip_init",
     .description = "This test will test the log_skip feature in the init function",
     .groups = DECLARE_TEST_GROUPS(&group_positive),
-    .test_init = selftest_log_skip_in_init,
-    .test_run = selftest_log_skip_in_run,
+    .test_init = selftest_log_skip_init,
+    .test_run = selftest_log_skip_run,
     .desired_duration = -1,
 },
 {
-    .id = "selftest_log_skip_in_run_all_threads",
+    .id = "selftest_log_skip_run_all_threads",
     .description = "This test will test the log_skip feature in the run function where all threads skip",
     .groups = DECLARE_TEST_GROUPS(&group_positive),
-    .test_run = selftest_log_skip_in_run_all_threads_run,
+    .test_run = selftest_log_skip_run_all_threads,
     .desired_duration = -1,
 },
 {
-    .id = "selftest_log_skip_in_run_even_threads",
+    .id = "selftest_log_skip_run_even_threads",
     .description = "This test will test the log_skip feature in the run function where only even numbered threads skip",
     .groups = DECLARE_TEST_GROUPS(&group_positive),
-    .test_run = selftest_log_skip_in_run_even_threads_run,
+    .test_run = selftest_log_skip_run_even_threads,
     .desired_duration = -1,
 },
 {
