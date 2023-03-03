@@ -1616,7 +1616,7 @@ static void format_and_print_message(int fd, int message_level, std::string_view
                 writeln(fd, indent_spaces(), "      text: |1");
                 print_content_indented(fd, "       ", message);
             } else {
-                writeln(fd, indent_spaces(), "  skip_reason: |1");
+                writeln(fd, indent_spaces(), "  skip-reason: |1");
                 print_content_indented(fd, "   ", message);
             }   
         } else {
@@ -1634,6 +1634,8 @@ static void format_and_print_message(int fd, int message_level, std::string_view
                 IGNORE_RETVAL(writev(fd, vec, std::size(vec)));
                 print_content_single_line(fd, ", text: '", message, "' }");
             } else {
+                iovec vec[] = { IoVec(indent_spaces()) };
+                IGNORE_RETVAL(writev(fd, vec, std::size(vec)));
                 print_content_single_line(fd, "  skip-reason: '", message, "'");
             }
         } else {
@@ -1769,7 +1771,7 @@ inline AbstractLogger::AbstractLogger(const struct test *test, TestResult state_
 
     if (state == TestSkipped)
         return;         // no threads were started
-
+        
     for (int i = 0; i < num_cpus(); ++i) {
         struct per_thread_data *data = cpu_data_for_thread(i);
         ThreadState thr_state = data->thread_state.load(std::memory_order_relaxed);
@@ -1828,7 +1830,7 @@ void KeyValuePairLogger::print(int tc, ChildExitStatus status)
                 format_and_print_message(file_log_fd, -1, message, false);
         } else {
             logging_printf(LOG_LEVEL_QUIET, "%s_skip_category = %s\n", test->id, "UNKNOWN");
-            logging_printf(LOG_LEVEL_QUIET, "%s_skip_reason = %s\n", test->id, "unknown");
+            logging_printf(LOG_LEVEL_QUIET, "%s_skip_reason = %s\n", test->id, "Unknown, check main thread message for details");
         }
     }
 
@@ -1974,6 +1976,8 @@ void TapFormatLogger::print(int tc, ChildExitStatus status)
             get_skip_message(-1, init_skip_message);
             if (init_skip_message.size() != 0)
                 tap_line += " (" + std::string(char_to_skip_category(init_skip_message[3])) + " : " + init_skip_message.substr(4,init_skip_message.size()) + ")";
+            else
+                tap_line += "(UNKNOWN: check main thread message for details)";
         }       
     }
     int loglevel = LOG_LEVEL_VERBOSE(1);
@@ -2358,7 +2362,7 @@ void YamlLogger::print_result_line(ChildExitStatus status)
                         format_and_print_message(file_log_fd, -1, message, false);
                 } else {
                     logging_printf(loglevel, "  skip-category: %s\n", "UNKNOWN");  
-                    return logging_printf(loglevel, "  skip-reason: %s\n", "unknown");
+                    return logging_printf(loglevel, "  skip-reason: %s\n", "Unknown, check main thread message for details");
                 }
             }
             return;
