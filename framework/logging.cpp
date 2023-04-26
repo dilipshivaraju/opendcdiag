@@ -1258,6 +1258,9 @@ void log_message_skip(int thread_num, SkipCategory category, const char *fmt, ..
     std::string msg = create_filtered_message_string(fmt, va);
     va_end(va);
 
+    per_thread_data *thr = cpu_data_for_thread(thread_num);
+    thr->skip = true;
+
     std::string tmp_s;
     tmp_s += SANDSTONE_LOG_SKIP;
     tmp_s.push_back(category);
@@ -1777,7 +1780,11 @@ inline AbstractLogger::AbstractLogger(const struct test *test, TestResult state_
     for (int i = 0; i < num_cpus(); ++i) {
         struct per_thread_data *data = cpu_data_for_thread(i);
         ThreadState thr_state = data->thread_state.load(std::memory_order_relaxed);
-        if (data->has_failed()) {
+        if (data->skip) {
+            // if there is log_skip message in run unconditionally treat it as skip irrespective of return code
+            ++sc;
+            ++pc;     
+        } else if (data->has_failed()) {
             if (data->fail_time != 0 && data->fail_time < earliest_fail)
                 earliest_fail = data->fail_time;
         } else if (thr_state == thread_running) {

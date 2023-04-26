@@ -1682,6 +1682,12 @@ static TestResult run_thread_slices(/*nonconst*/ struct test *test)
             ret = intptr_t(retptr);
         }
 
+        // if there is log_skip message in init unconditionally treat it as skip irrespective of return code
+        if (cpu_data_for_thread(-1)->skip) {
+            state = TestSkipped;
+            break;
+        }
+
         if (ret > 0 || sApp->shmem->main_thread_data.has_failed()) {
             logging_mark_thread_failed(-1);
             if (ret > 0)

@@ -189,6 +189,9 @@ struct alignas(64) per_thread_data
     uint64_t inner_loop_count_at_fail;
     uint64_t fail_time;
 
+    // if there is log_skip message in init/run unconditionally treat it as skip irrespective of return code
+    bool skip = false;
+
     /* Thread's effective CPU frequency during execution */
     double effective_freq_mhz;
 
