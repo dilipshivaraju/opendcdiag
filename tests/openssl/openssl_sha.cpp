@@ -112,6 +112,7 @@ static int ssl_sha_init(struct test* test)
         return EXIT_SUCCESS;
     }
     else {
+        log_skip(RESOURCE_UNAVAILABLE, "s_EVP_DigestInit_ex/s_EVP_DigestUpdate/s_EVP_DigestFinal_ex/s_EVP_get_digestbyname one or more of these have failed");
         return EXIT_SKIP;
     }
 }
