@@ -207,8 +207,10 @@ static int scan_init(struct test *test)
         close(run_fd);
 
         /* load test file */
-        if (!load_test_file(ifs0, batch_fd, test, ifs_info))
-            return EXIT_SKIP;
+        if (!load_test_file(ifs0, batch_fd, test, ifs_info)) {
+        	log_skip(RESOURCE_UNAVAILABLE, "cannot load test file");
+        	return EXIT_SKIP;
+        }
 
         /* read image version if available and log it */
         if (read_file(ifs0, "image_version", ifs_info->image_version) <= 0) {
@@ -229,8 +231,10 @@ static int scan_run(struct test *test, int cpu)
         bool any_test_succeded = false;
         ifs_test_t *ifs_info = test->data;
 
-        if (cpu_info[cpu].thread_id != 0)
-                return EXIT_SKIP;
+        if (cpu_info[cpu].thread_id != 0) {
+			log_skip(RUNTIME_SKIP, "Test should run only on thread 0 on every core");
+			return EXIT_SKIP;
+		}
 
         basefd = open(PATH_SYS_IFS_BASE, O_DIRECTORY | O_CLOEXEC);
         if (basefd < 0)
