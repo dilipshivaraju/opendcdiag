@@ -1704,8 +1704,9 @@ static int print_one_thread_messages(int fd, struct per_thread_data *data, struc
             if (status.result != TestSkipped) { // If test skipped in init, no need to display as it's already displayed in print_result_line
                 std::string skip_message;
                 format_skip_message(skip_message, message);
-                std::string_view skip_message_view(&skip_message[0], skip_message.size());
-                format_and_print_message(fd, -1, skip_message_view, true);
+                //std::string_view skip_message_view(&skip_message[0], skip_message.size());
+                //format_and_print_message(fd, -1, skip_message_view, true);
+                format_and_print_message(fd, -1, std::string_view{&skip_message[0], skip_message.size()}, true);
             }
             break;
         }
@@ -2317,8 +2318,9 @@ inline int YamlLogger::print_one_thread_messages(int fd, mmap_region r, int leve
             if (status.result != TestSkipped) { // If test skipped in init, no need to display as it's already displayed in print_result_line
                 std::string skip_message;
                 format_skip_message(skip_message, message);
-                std::string_view skip_message_view(&skip_message[0], skip_message.size());
-                format_and_print_message(fd, 4, skip_message_view, true);
+                //std::string_view skip_message_view(&skip_message[0], skip_message.size());
+                //format_and_print_message(fd, 4, skip_message_view, true);
+                format_and_print_message(fd, 4, std::string_view{&skip_message[0], skip_message.size()}, true);
             }
             break;
         }
