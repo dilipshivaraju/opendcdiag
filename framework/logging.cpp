@@ -462,6 +462,8 @@ static const char *char_to_skip_category(int val)
         return "SELFTEST_SKIP";
     case SKIP_CATEGORY(8):
         return "OS_NOT_SUPPORTED";
+    case SKIP_CATEGORY(9):
+        return "MINIMUM_THREAD_ISSUE";
     }
 
     return "NO CATEGORY PRESENT";
