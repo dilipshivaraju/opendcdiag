@@ -460,6 +460,8 @@ static const char *char_to_skip_category(int val)
         return "RUNTIME_SKIP";
     case SKIP_CATEGORY(7):
         return "SELFTEST_SKIP";
+    case SKIP_CATEGORY(8):
+        return "OS_NOT_SUPPORTED";
     }
 
     return "NO CATEGORY PRESENT";

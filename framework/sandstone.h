@@ -94,6 +94,7 @@ typedef enum SkipCategory {
     UNKNOWN,
     RUNTIME_SKIP,
     SELFTEST_SKIP,
+    OS_NOT_SUPPORTED
 } SkipCategory;
 
 /// logs a skip message to the logfile. log_skip accepts the category to which the skip belongs to
