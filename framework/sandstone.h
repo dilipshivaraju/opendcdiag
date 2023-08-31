@@ -87,11 +87,8 @@ typedef enum SkipCategory {
     CpuNotSupportedSkipCategory,
     DeviceNotFoundSkipCategory,
     DeviceNotConfiguredSkipCategory,
-    UnknownSkipCategory,
-    RuntimeSkipCategory,
     SelftestSkipCategory,
     OsNotSupportedSkipCategory,
-    ThreadIssueSkipCategory
 } SkipCategory;
 
 /// logs a skip message to the logfile. log_skip accepts the category to which the skip belongs to
