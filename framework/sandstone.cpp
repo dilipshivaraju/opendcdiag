@@ -3577,16 +3577,13 @@ int main(int argc, char **argv)
         case vary_frequency:
 #ifdef _WIN32
             fprintf(stderr, "--vary-frequency doesn't work on windows\n");
-            return EXIT_FAILURE;
+            return EX_USAGE;
 #else
             if (getuid() != 0) {
                 fprintf(stderr, "--vary-frequency requires user to be root\n");
                 return EXIT_NOPERMISSION;
             }
             sApp->vary_frequency_mode = true;
-
-            //before running the test, do a initial setup that also saves initial state for all cpus
-            sApp->frequency_manager.initial_setup();
             break;
 #endif
         
@@ -3747,6 +3744,10 @@ int main(int argc, char **argv)
 
         sApp->mce_count_last = std::accumulate(sApp->mce_counts_start.begin(), sApp->mce_counts_start.end(), uint64_t(0));
     }
+
+    //if --vary-frequency mode is used, do a initial setup and checks for running different frequencies
+    if (sApp->vary_frequency_mode)
+        sApp->frequency_manager.initial_setup();
 
 #ifndef __OPTIMIZE__
     logging_printf(LOG_LEVEL_VERBOSE(1), "THIS IS AN UNOPTIMIZED BUILD: DON'T TRUST TEST TIMING!\n");
