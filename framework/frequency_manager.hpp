@@ -10,6 +10,8 @@
 #define SCALING_GOVERNOR       "/cpufreq/scaling_governor"
 #define SCALING_SETSPEED       "/cpufreq/scaling_setspeed"
 
+#include <boost/algorithm/string.hpp>
+
 class FrequencyManager
 {
 private:
@@ -90,6 +92,21 @@ public:
     void initial_setup()
     {
 #ifdef __linux__
+        /* check if "userspace" frequency governor is available. Not all distributions have it*/
+        std::string scaling_governor_path{"/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors"};
+        std::string available_governors_string = read_file(scaling_governor_path);
+        std::vector<std::string> available_governors;
+        boost::split(available_governors, available_governors_string, boost::is_any_of(" "));
+
+        for (auto &each_governor : available_governors) {
+            if (each_governor == "userspace")
+                break;
+            else {
+                fprintf(stderr, "%s: Cannot find \"userspace\" scaling governor\n", program_invocation_name);
+                exit(EXIT_FAILURE);
+            }
+        }
+
         /* record supported max and min frequencies */
         std::string cpuinfo_max_freq_path{"/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq"};
         max_frequency_supported = get_frequency_from_file(cpuinfo_max_freq_path);

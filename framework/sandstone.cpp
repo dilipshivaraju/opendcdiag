@@ -3575,13 +3575,15 @@ int main(int argc, char **argv)
             break;
 
         case vary_frequency:
-#ifdef _WIN32
-            fprintf(stderr, "--vary-frequency doesn't work on windows\n");
-            return EX_USAGE;
-#else
+//#ifdef _WIN32
+            if (!InterruptMonitor::Works) {
+                fprintf(stderr, "--vary-frequency doesn't work on windows\n");
+                return EX_USAGE;
+            }
+//#else
             sApp->vary_frequency_mode = true;
             break;
-#endif
+//#endif
         
         case version_option:
             logging_print_version();
