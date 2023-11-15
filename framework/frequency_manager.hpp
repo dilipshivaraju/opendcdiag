@@ -44,7 +44,7 @@ private:
         FILE *file = fopen(file_path.c_str(), "w");
 
         if (file == NULL) {
-            fprintf(stderr, "%s: cannot write \"%s\" to file \"%s\" :%m\n", program_invocation_name, line.c_str(), file_path.c_str());
+            fprintf(stderr, "%s: cannot write \"%s\" to file \"%s\". User should be root :%m\n", program_invocation_name, line.c_str(), file_path.c_str());
             exit(EXIT_FAILURE);
         }
         fprintf(file, "%s", line.c_str());

@@ -3579,10 +3579,6 @@ int main(int argc, char **argv)
             fprintf(stderr, "--vary-frequency doesn't work on windows\n");
             return EX_USAGE;
 #else
-            if (getuid() != 0) {
-                fprintf(stderr, "--vary-frequency requires user to be root\n");
-                return EXIT_NOPERMISSION;
-            }
             sApp->vary_frequency_mode = true;
             break;
 #endif
