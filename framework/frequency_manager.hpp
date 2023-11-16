@@ -10,8 +10,6 @@
 #define SCALING_GOVERNOR       "/cpufreq/scaling_governor"
 #define SCALING_SETSPEED       "/cpufreq/scaling_setspeed"
 
-#include <boost/algorithm/string.hpp>
-
 class FrequencyManager
 {
 private:
@@ -41,16 +39,16 @@ private:
         return std::string(line);
     }
 
-    void write_file(const std::string &file_path, const std::string &line)
+    int write_file(const std::string &file_path, const std::string &line)
     {
         FILE *file = fopen(file_path.c_str(), "w");
 
-        if (file == NULL) {
-            fprintf(stderr, "%s: cannot write \"%s\" to file \"%s\". User should be root :%m\n", program_invocation_name, line.c_str(), file_path.c_str());
-            exit(EXIT_FAILURE);
-        }
+        if (file == NULL)
+            return 1;
+
         fprintf(file, "%s", line.c_str());
         fclose(file);
+        return 0;
     }
 
     int get_frequency_from_file(const std::string &file_path)
@@ -86,6 +84,30 @@ private:
 #endif
     }
 
+    void check_if_userspace_present()
+    {
+#ifdef __linux__
+        const char *scaling_governor_path = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors";
+        char read_file[100];
+        FILE *file = fopen(scaling_governor_path, "r");
+
+        if (file == NULL) {
+            fprintf(stderr, "%s: cannot read from file: %s :%m\n", program_invocation_name, scaling_governor_path);
+            exit(EXIT_FAILURE);
+        }
+
+        while (fscanf(file, "%s", read_file)) {
+            if (strcmp(read_file, "userspace") == 0) {
+                fclose(file);
+                return;
+            }
+        }
+
+        fprintf(stderr, "%s: Cannot find \"userspace\" scaling governor from the file: %s\n", program_invocation_name, scaling_governor_path);
+        exit(EXIT_FAILURE);
+#endif
+    }
+
 public:
     FrequencyManager() {}
 
@@ -93,19 +115,7 @@ public:
     {
 #ifdef __linux__
         /* check if "userspace" frequency governor is available. Not all distributions have it*/
-        std::string scaling_governor_path{"/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors"};
-        std::string available_governors_string = read_file(scaling_governor_path);
-        std::vector<std::string> available_governors;
-        boost::split(available_governors, available_governors_string, boost::is_any_of(" "));
-
-        for (auto &each_governor : available_governors) {
-            if (each_governor == "userspace")
-                break;
-            else {
-                fprintf(stderr, "%s: Cannot find \"userspace\" scaling governor\n", program_invocation_name);
-                exit(EXIT_FAILURE);
-            }
-        }
+        check_if_userspace_present();    
 
         /* record supported max and min frequencies */
         std::string cpuinfo_max_freq_path{"/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq"};
@@ -114,7 +124,7 @@ public:
         std::string cpuinfo_min_freq_path{"/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq"};
         min_frequency_supported = get_frequency_from_file(cpuinfo_min_freq_path);
 
-        // record different frequencies
+        // populate different frequencies for each test to run
         populate_frequency_levels();
 
         // save states
@@ -132,7 +142,10 @@ public:
             per_cpu_initial_scaling_setspeed.push_back(read_file(initial_scaling_setspeed_frequency_path));
 
             //change scaling_governor to userspace to have different frequencies
-            write_file(scaling_governor_path, "userspace");
+            if (write_file(scaling_governor_path, "userspace") == 1) {
+                fprintf(stderr, "%s: cannot write userspace to file \"%s\". User should be root :%m\n", program_invocation_name, scaling_governor_path.c_str());
+                exit(EXIT_NOPERMISSION);
+            }
         }
 #endif 
     }
@@ -146,7 +159,11 @@ public:
             std::string scaling_setspeed = BASE_FREQ_PATH;
             scaling_setspeed += std::to_string(cpu_info[cpu].cpu_number);
             scaling_setspeed += SCALING_SETSPEED;
-            write_file(scaling_setspeed, std::to_string(current_set_frequency));
+            if (write_file(scaling_setspeed, std::to_string(current_set_frequency)) == 1) {
+                fprintf(stderr, "%s: cannot write current_frequency (%d) to the file \"%s\" :%m\n", 
+                        program_invocation_name, current_set_frequency ,scaling_setspeed.c_str());
+                exit(EXIT_NOPERMISSION);
+            } 
         }
 #endif
     }
@@ -159,13 +176,21 @@ public:
             std::string scaling_governor_path = BASE_FREQ_PATH;
             scaling_governor_path += std::to_string(cpu_info[cpu].cpu_number);
             scaling_governor_path += SCALING_GOVERNOR;
-            write_file(scaling_governor_path, per_cpu_initial_scaling_governor[cpu]);
+            if (write_file(scaling_governor_path, per_cpu_initial_scaling_governor[cpu]) == 1) {
+                fprintf(stderr, "%s: cannot write saved governor (%s) to the file \"%s\" :%m\n", 
+                    program_invocation_name, per_cpu_initial_scaling_governor[cpu].c_str(), scaling_governor_path.c_str());
+                exit(EXIT_NOPERMISSION);
+            }
 
             //restore saved frequency for every cpu
             std::string scaling_setspeed_path = BASE_FREQ_PATH;
             scaling_setspeed_path += std::to_string(cpu_info[cpu].cpu_number);
             scaling_setspeed_path += SCALING_SETSPEED;
-            write_file(scaling_setspeed_path, per_cpu_initial_scaling_setspeed[cpu]);
+            if (write_file(scaling_setspeed_path, per_cpu_initial_scaling_setspeed[cpu]) == 1) {
+                fprintf(stderr, "%s: cannot write saved scaling setspeed (%s) to the file \"%s\" :%m\n", 
+                    program_invocation_name, per_cpu_initial_scaling_setspeed[cpu].c_str(), scaling_setspeed_path.c_str());
+                exit(EXIT_NOPERMISSION);
+            }
         }
 #endif
     }
