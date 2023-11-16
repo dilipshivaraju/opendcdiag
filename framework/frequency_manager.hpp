@@ -201,5 +201,12 @@ public:
         frequency_level_idx = 0;
 #endif
     }
+
+    static constexpr bool Works =
+#if defined(__linux__)
+            true;
+#else
+            false;
+#endif
 };
 #endif //FREQUENCY_MANAGER_HPP

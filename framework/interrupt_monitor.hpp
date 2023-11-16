@@ -51,13 +51,6 @@ public:
 #else
             false;
 #endif
-
-    static constexpr bool Works =
-#if defined(__linux__) && defined(__x86_64__)
-            true;
-#else
-            false;
-#endif
 };
 
 #if !defined(__linux__) || !defined(__x86_64__)

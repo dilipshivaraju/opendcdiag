@@ -3575,8 +3575,8 @@ int main(int argc, char **argv)
             break;
 
         case vary_frequency:
-            if (!InterruptMonitor::Works) {
-                fprintf(stderr, "--vary-frequency works only on Linux\n");
+            if (!FrequencyManager::Works) {
+                fprintf(stderr, "%s: --vary-frequency works only on Linux\n", program_invocation_name);
                 return EX_USAGE;
             }
             sApp->vary_frequency_mode = true;
