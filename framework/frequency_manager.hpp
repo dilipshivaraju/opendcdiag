@@ -6,6 +6,7 @@
 #ifndef FREQUENCY_MANAGER_HPP
 #define FREQUENCY_MANAGER_HPP
 
+#include <unordered_set>
 #define BASE_FREQ_PATH         "/sys/devices/system/cpu/cpu"
 #define SCALING_GOVERNOR       "/cpufreq/scaling_governor"
 #define SCALING_SETSPEED       "/cpufreq/scaling_setspeed"
@@ -23,6 +24,21 @@ private:
     std::vector<int> frequency_levels;
     int frequency_level_idx = 0;
     static constexpr int total_frequency_levels = 9;
+
+    int get_frequency_from_file(const std::string &file_path)
+    {
+        /* Read frequency value from file */
+        int frequency = 0;
+        FILE *file = fopen(file_path.c_str(), "r");
+
+        if (file == NULL) {
+            fprintf(stderr, "%s: cannot read from file: %s: %m\n", program_invocation_name, file_path.c_str());
+            exit(EX_IOERR);
+        }
+        fscanf(file, "%d", &frequency);
+        fclose(file);
+        return frequency;
+    }
 
     std::string read_file(const std::string &file_path)
     {
@@ -53,21 +69,6 @@ private:
         fclose(file);
     }
 
-    int get_frequency_from_file(const std::string &file_path)
-    {
-        /* Read frequency value from file */
-        int frequency = 0;
-        FILE *file = fopen(file_path.c_str(), "r");
-
-        if (file == NULL) {
-            fprintf(stderr, "%s: cannot read from file: %s: %m\n", program_invocation_name, file_path.c_str());
-            exit(EX_IOERR);
-        }
-        fscanf(file, "%d", &frequency);
-        fclose(file);
-        return frequency;
-    }
-
     void populate_frequency_levels()
     {
         frequency_levels.push_back(max_frequency_supported);
@@ -75,7 +76,7 @@ private:
 
         std::vector<int> tmp = frequency_levels;
 
-        while (frequency_levels.size() != total_frequency_levels)
+        while (frequency_levels.size() < total_frequency_levels)
         {
             std::sort(tmp.begin(), tmp.end(), std::greater<int>());
             for (int idx = 1; idx < tmp.size(); idx++)
@@ -179,6 +180,7 @@ public:
 #endif
     }
 
+
     void reset_frequency_level_idx()
     {
 #ifdef __linux__
@@ -187,6 +189,158 @@ public:
     }
 
     static constexpr bool FrequencyManagerWorks =
+#if defined(__linux__)
+            true;
+#else
+            false;
+#endif
+};
+
+class UncoreFrequencyManager {
+private:
+    std::vector<std::pair<int, int>> initial_uncore_frequency;  // (min, max) pair for each socket
+    std::vector<std::vector<int>> uncore_frequency_levels;  // frequency levels for each socket
+    uint16_t total_sockets = 0;
+    static constexpr int total_frequency_levels = 9;
+    int frequency_level_idx = 0;
+
+    int get_frequency_from_file(const std::string &file_path)
+    {
+        /* Read frequency value from file */
+        int frequency = 0;
+        FILE *file = fopen(file_path.c_str(), "r");
+
+        if (file == NULL) {
+            fprintf(stderr, "%s: cannot read from file: %s: %m\n", program_invocation_name, file_path.c_str());
+            exit(EX_IOERR);
+        }
+        fscanf(file, "%d", &frequency);
+        fclose(file);
+        return frequency;
+    }
+
+    void populate_uncore_frequency_levels(auto &max_min_frequency)
+    {
+        std::vector<int> tmp_frequency_levels;
+        tmp_frequency_levels.push_back(max_min_frequency.second);
+        tmp_frequency_levels.push_back(max_min_frequency.first);
+
+        std::vector<int> tmp = tmp_frequency_levels;
+
+        while (tmp_frequency_levels.size() < total_frequency_levels)
+        {
+            std::sort(tmp.begin(), tmp.end(), std::greater<int>());
+            for (int idx = 1; idx < tmp.size(); idx++)
+                tmp_frequency_levels.push_back((tmp[idx] + tmp[idx - 1]) / 2);
+            tmp = tmp_frequency_levels;
+        }
+
+        uncore_frequency_levels.push_back(std::move(tmp_frequency_levels));
+    }
+
+    void check_uncore_frequency_support()
+    {
+        // check for 0th socket. 0th socket should always be present.
+        const char *uncore_path = "/sys/devices/system/cpu/intel_uncore_frequency/package_00_die_00/initial_min_freq_khz";
+        FILE *file = fopen(uncore_path, "r");
+
+        if (file == NULL) {
+            fprintf(stderr, "%s: cannot read from file: %s. Please check if intel_uncore_frequency directory is present in the file path: %m\n", program_invocation_name, uncore_path);
+            exit(EX_IOERR);
+        }
+    }
+
+    void calculate_total_sockets()
+    {
+        std::unordered_set<int> found_socket_ids;
+
+        for (size_t cpu = 0; cpu < num_cpus(); cpu++) {
+            int socket_id = cpu_info[cpu].package_id;
+            if (found_socket_ids.count(socket_id) == 0) {
+                total_sockets++;
+                found_socket_ids.insert(socket_id);
+            }
+        }
+    }
+
+    void write_file(const std::string &file_path, const std::string &line)
+    {
+        FILE *file = fopen(file_path.c_str(), "w");
+
+        if (file == NULL) {
+            fprintf(stderr, "%s: cannot write \"%s\" to file \"%s\". Make sure the user is root: %m\n", program_invocation_name, line.c_str(), file_path.c_str());
+            exit(EXIT_NOPERMISSION);
+        }
+
+        fprintf(file, "%s", line.c_str());
+        fclose(file);
+    }
+
+public:
+
+    UncoreFrequencyManager() {};
+
+    void initial_setup()
+    {
+        check_uncore_frequency_support();
+
+        calculate_total_sockets();
+
+        for (size_t socket = 0; socket < total_sockets; socket++) {
+            std::pair<int, int> max_min_frequency;
+            std::string uncore_frequency_path = "/sys/devices/system/cpu/intel_uncore_frequency/package_0";
+            uncore_frequency_path += std::to_string(socket);
+
+            std::string min_freq_file = uncore_frequency_path + "_die_00/min_freq_khz";
+            max_min_frequency.first = get_frequency_from_file(min_freq_file);
+
+            std::string max_freq_file = uncore_frequency_path + "_die_00/max_freq_khz";
+            max_min_frequency.second = get_frequency_from_file(max_freq_file);
+
+            populate_uncore_frequency_levels(max_min_frequency);
+            initial_uncore_frequency.push_back(std::move(max_min_frequency));
+        }
+    }
+
+    void change_uncore_frequency() 
+    {
+        for (size_t socket = 0; socket < total_sockets; socket++) {
+            std::pair<int, int> max_min_frequency;
+            std::string uncore_frequency_path = "/sys/devices/system/cpu/intel_uncore_frequency/package_0";
+            uncore_frequency_path += std::to_string(socket);
+
+            std::string min_freq_file = uncore_frequency_path + "_die_00/min_freq_khz";
+            std::string frequency_to_write = std::to_string(uncore_frequency_levels[socket][frequency_level_idx++ % total_frequency_levels]);
+            write_file(min_freq_file, frequency_to_write);
+
+            std::string max_freq_file = uncore_frequency_path + "_die_00/max_freq_khz";
+            write_file(max_freq_file, frequency_to_write);
+        }
+    }
+
+    void restore_initial_uncore_frequency_state() 
+    {
+        for (size_t socket = 0; socket < total_sockets; socket++) {
+            std::pair<int, int> max_min_frequency;
+            std::string uncore_frequency_path = "/sys/devices/system/cpu/intel_uncore_frequency/package_0";
+            uncore_frequency_path += std::to_string(socket);
+
+            std::string min_freq_file = uncore_frequency_path + "_die_00/min_freq_khz";
+            std::string frequency_to_write = std::to_string(initial_uncore_frequency[socket].first);
+            write_file(min_freq_file, frequency_to_write);
+            
+            frequency_to_write = std::to_string(initial_uncore_frequency[socket].second);
+            std::string max_freq_file = uncore_frequency_path + "_die_00/max_freq_khz";
+            write_file(max_freq_file, frequency_to_write);
+        }
+    }
+
+    void reset_frequency_level_idx()
+    {
+        frequency_level_idx = 0;
+    }
+
+    static constexpr bool UncoreFrequencyManagerWorks =
 #if defined(__linux__)
             true;
 #else
